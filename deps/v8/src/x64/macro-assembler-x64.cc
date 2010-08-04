@@ -336,9 +336,29 @@ void MacroAssembler::CallStub(CodeStub* stub) {
 }
 
 
+Object* MacroAssembler::TryCallStub(CodeStub* stub) {
+  ASSERT(allow_stub_calls());  // Calls are not allowed in some stubs.
+  Object* result = stub->TryGetCode();
+  if (!result->IsFailure()) {
+    call(Handle<Code>(Code::cast(result)), RelocInfo::CODE_TARGET);
+  }
+  return result;
+}
+
+
 void MacroAssembler::TailCallStub(CodeStub* stub) {
   ASSERT(allow_stub_calls());  // calls are not allowed in some stubs
   Jump(stub->GetCode(), RelocInfo::CODE_TARGET);
+}
+
+
+Object* MacroAssembler::TryTailCallStub(CodeStub* stub) {
+  ASSERT(allow_stub_calls());  // Calls are not allowed in some stubs.
+  Object* result = stub->TryGetCode();
+  if (!result->IsFailure()) {
+    jmp(Handle<Code>(Code::cast(result)), RelocInfo::CODE_TARGET);
+  }
+  return result;
 }
 
 
@@ -361,6 +381,12 @@ void MacroAssembler::CallRuntime(Runtime::FunctionId id, int num_arguments) {
 }
 
 
+Object* MacroAssembler::TryCallRuntime(Runtime::FunctionId id,
+                                       int num_arguments) {
+  return TryCallRuntime(Runtime::FunctionForId(id), num_arguments);
+}
+
+
 void MacroAssembler::CallRuntime(Runtime::Function* f, int num_arguments) {
   // If the expected number of arguments of the runtime function is
   // constant, we check that the actual number of arguments match the
@@ -378,6 +404,26 @@ void MacroAssembler::CallRuntime(Runtime::Function* f, int num_arguments) {
   movq(rbx, ExternalReference(f));
   CEntryStub ces(f->result_size);
   CallStub(&ces);
+}
+
+
+Object* MacroAssembler::TryCallRuntime(Runtime::Function* f,
+                                       int num_arguments) {
+  if (f->nargs >= 0 && f->nargs != num_arguments) {
+    IllegalOperation(num_arguments);
+    // Since we did not call the stub, there was no allocation failure.
+    // Return some non-failure object.
+    return Heap::undefined_value();
+  }
+
+  // TODO(1236192): Most runtime routines don't need the number of
+  // arguments passed in because it is constant. At some point we
+  // should remove this need and make the runtime routine entry code
+  // smarter.
+  Set(rax, num_arguments);
+  movq(rbx, ExternalReference(f));
+  CEntryStub ces(f->result_size);
+  return TryCallStub(&ces);
 }
 
 
@@ -414,6 +460,87 @@ void MacroAssembler::TailCallRuntime(Runtime::FunctionId fid,
                                      int num_arguments,
                                      int result_size) {
   TailCallExternalReference(ExternalReference(fid), num_arguments, result_size);
+}
+
+
+static int Offset(ExternalReference ref0, ExternalReference ref1) {
+  int64_t offset = (ref0.address() - ref1.address());
+  // Check that fits into int.
+  ASSERT(static_cast<int>(offset) == offset);
+  return static_cast<int>(offset);
+}
+
+
+void MacroAssembler::PushHandleScope(Register scratch) {
+  ExternalReference extensions_address =
+      ExternalReference::handle_scope_extensions_address();
+  const int kExtensionsOffset = 0;
+  const int kNextOffset = Offset(
+      ExternalReference::handle_scope_next_address(),
+      extensions_address);
+  const int kLimitOffset = Offset(
+      ExternalReference::handle_scope_limit_address(),
+      extensions_address);
+
+  // Push the number of extensions, smi-tagged so the gc will ignore it.
+  movq(kScratchRegister, extensions_address);
+  movq(scratch, Operand(kScratchRegister, kExtensionsOffset));
+  movq(Operand(kScratchRegister, kExtensionsOffset), Immediate(0));
+  Integer32ToSmi(scratch, scratch);
+  push(scratch);
+  // Push next and limit pointers which will be wordsize aligned and
+  // hence automatically smi tagged.
+  push(Operand(kScratchRegister, kNextOffset));
+  push(Operand(kScratchRegister, kLimitOffset));
+}
+
+
+Object* MacroAssembler::PopHandleScopeHelper(Register saved,
+                                             Register scratch,
+                                             bool gc_allowed) {
+  ExternalReference extensions_address =
+      ExternalReference::handle_scope_extensions_address();
+  const int kExtensionsOffset = 0;
+  const int kNextOffset = Offset(
+      ExternalReference::handle_scope_next_address(),
+      extensions_address);
+  const int kLimitOffset = Offset(
+      ExternalReference::handle_scope_limit_address(),
+      extensions_address);
+
+  Object* result = NULL;
+  Label write_back;
+  movq(kScratchRegister, extensions_address);
+  cmpq(Operand(kScratchRegister, kExtensionsOffset), Immediate(0));
+  j(equal, &write_back);
+  push(saved);
+  if (gc_allowed) {
+    CallRuntime(Runtime::kDeleteHandleScopeExtensions, 0);
+  } else {
+    result = TryCallRuntime(Runtime::kDeleteHandleScopeExtensions, 0);
+    if (result->IsFailure()) return result;
+  }
+  pop(saved);
+  movq(kScratchRegister, extensions_address);
+
+  bind(&write_back);
+  pop(Operand(kScratchRegister, kLimitOffset));
+  pop(Operand(kScratchRegister, kNextOffset));
+  pop(scratch);
+  SmiToInteger32(scratch, scratch);
+  movq(Operand(kScratchRegister, kExtensionsOffset), scratch);
+
+  return result;
+}
+
+
+void MacroAssembler::PopHandleScope(Register saved, Register scratch) {
+  PopHandleScopeHelper(saved, scratch, true);
+}
+
+
+Object* MacroAssembler::TryPopHandleScope(Register saved, Register scratch) {
+  return PopHandleScopeHelper(saved, scratch, false);
 }
 
 
@@ -2208,7 +2335,8 @@ void MacroAssembler::LeaveFrame(StackFrame::Type type) {
 }
 
 
-void MacroAssembler::EnterExitFrame(ExitFrame::Mode mode, int result_size) {
+void MacroAssembler::EnterExitFramePrologue(ExitFrame::Mode mode,
+                                            bool save_rax) {
   // Setup the frame structure on the stack.
   // All constants are relative to the frame pointer of the exit frame.
   ASSERT(ExitFrameConstants::kCallerSPDisplacement == +2 * kPointerSize);
@@ -2226,18 +2354,19 @@ void MacroAssembler::EnterExitFrame(ExitFrame::Mode mode, int result_size) {
   // Save the frame pointer and the context in top.
   ExternalReference c_entry_fp_address(Top::k_c_entry_fp_address);
   ExternalReference context_address(Top::k_context_address);
-  movq(r14, rax);  // Backup rax before we use it.
+  if (save_rax) {
+    movq(r14, rax);  // Backup rax before we use it.
+  }
 
   movq(rax, rbp);
   store_rax(c_entry_fp_address);
   movq(rax, rsi);
   store_rax(context_address);
+}
 
-  // Setup argv in callee-saved register r12. It is reused in LeaveExitFrame,
-  // so it must be retained across the C-call.
-  int offset = StandardFrameConstants::kCallerSPOffset - kPointerSize;
-  lea(r12, Operand(rbp, r14, times_pointer_size, offset));
-
+void MacroAssembler::EnterExitFrameEpilogue(ExitFrame::Mode mode,
+                                            int result_size,
+                                            int argc) {
 #ifdef ENABLE_DEBUGGER_SUPPORT
   // Save the state of all registers to the stack from the memory
   // location. This is needed to allow nested break points.
@@ -2258,7 +2387,7 @@ void MacroAssembler::EnterExitFrame(ExitFrame::Mode mode, int result_size) {
   // Reserve space for the Arguments object.  The Windows 64-bit ABI
   // requires us to pass this structure as a pointer to its location on
   // the stack.  The structure contains 2 values.
-  int argument_stack_space = 2 * kPointerSize;
+  int argument_stack_space = argc * kPointerSize;
   // We also need backing space for 4 parameters, even though
   // we only pass one or two parameter, and it is in a register.
   int argument_mirror_space = 4 * kPointerSize;
@@ -2277,6 +2406,33 @@ void MacroAssembler::EnterExitFrame(ExitFrame::Mode mode, int result_size) {
 
   // Patch the saved entry sp.
   movq(Operand(rbp, ExitFrameConstants::kSPOffset), rsp);
+}
+
+
+void MacroAssembler::EnterExitFrame(ExitFrame::Mode mode, int result_size) {
+  EnterExitFramePrologue(mode, true);
+
+  // Setup argv in callee-saved register r12. It is reused in LeaveExitFrame,
+  // so it must be retained across the C-call.
+  int offset = StandardFrameConstants::kCallerSPOffset - kPointerSize;
+  lea(r12, Operand(rbp, r14, times_pointer_size, offset));
+
+  EnterExitFrameEpilogue(mode, result_size, 2);
+}
+
+
+void MacroAssembler::EnterApiExitFrame(ExitFrame::Mode mode,
+                                       int stack_space,
+                                       int argc,
+                                       int result_size) {
+  EnterExitFramePrologue(mode, false);
+
+  // Setup argv in callee-saved register r12. It is reused in LeaveExitFrame,
+  // so it must be retained across the C-call.
+  int offset = StandardFrameConstants::kCallerSPOffset - kPointerSize;
+  lea(r12, Operand(rbp, (stack_space * kPointerSize) + offset));
+
+  EnterExitFrameEpilogue(mode, result_size, argc);
 }
 
 
@@ -2319,101 +2475,6 @@ void MacroAssembler::LeaveExitFrame(ExitFrame::Mode mode, int result_size) {
   ExternalReference c_entry_fp_address(Top::k_c_entry_fp_address);
   movq(kScratchRegister, c_entry_fp_address);
   movq(Operand(kScratchRegister, 0), Immediate(0));
-}
-
-
-Register MacroAssembler::CheckMaps(JSObject* object,
-                                   Register object_reg,
-                                   JSObject* holder,
-                                   Register holder_reg,
-                                   Register scratch,
-                                   int save_at_depth,
-                                   Label* miss) {
-  // Make sure there's no overlap between scratch and the other
-  // registers.
-  ASSERT(!scratch.is(object_reg) && !scratch.is(holder_reg));
-
-  // Keep track of the current object in register reg.  On the first
-  // iteration, reg is an alias for object_reg, on later iterations,
-  // it is an alias for holder_reg.
-  Register reg = object_reg;
-  int depth = 0;
-
-  if (save_at_depth == depth) {
-    movq(Operand(rsp, kPointerSize), object_reg);
-  }
-
-  // Check the maps in the prototype chain.
-  // Traverse the prototype chain from the object and do map checks.
-  while (object != holder) {
-    depth++;
-
-    // Only global objects and objects that do not require access
-    // checks are allowed in stubs.
-    ASSERT(object->IsJSGlobalProxy() || !object->IsAccessCheckNeeded());
-
-    JSObject* prototype = JSObject::cast(object->GetPrototype());
-    if (Heap::InNewSpace(prototype)) {
-      // Get the map of the current object.
-      movq(scratch, FieldOperand(reg, HeapObject::kMapOffset));
-      Cmp(scratch, Handle<Map>(object->map()));
-      // Branch on the result of the map check.
-      j(not_equal, miss);
-      // Check access rights to the global object.  This has to happen
-      // after the map check so that we know that the object is
-      // actually a global object.
-      if (object->IsJSGlobalProxy()) {
-        CheckAccessGlobalProxy(reg, scratch, miss);
-
-        // Restore scratch register to be the map of the object.
-        // We load the prototype from the map in the scratch register.
-        movq(scratch, FieldOperand(reg, HeapObject::kMapOffset));
-      }
-      // The prototype is in new space; we cannot store a reference
-      // to it in the code. Load it from the map.
-      reg = holder_reg;  // from now the object is in holder_reg
-      movq(reg, FieldOperand(scratch, Map::kPrototypeOffset));
-
-    } else {
-      // Check the map of the current object.
-      Cmp(FieldOperand(reg, HeapObject::kMapOffset),
-          Handle<Map>(object->map()));
-      // Branch on the result of the map check.
-      j(not_equal, miss);
-      // Check access rights to the global object.  This has to happen
-      // after the map check so that we know that the object is
-      // actually a global object.
-      if (object->IsJSGlobalProxy()) {
-        CheckAccessGlobalProxy(reg, scratch, miss);
-      }
-      // The prototype is in old space; load it directly.
-      reg = holder_reg;  // from now the object is in holder_reg
-      Move(reg, Handle<JSObject>(prototype));
-    }
-
-    if (save_at_depth == depth) {
-      movq(Operand(rsp, kPointerSize), reg);
-    }
-
-    // Go to the next object in the prototype chain.
-    object = prototype;
-  }
-
-  // Check the holder map.
-  Cmp(FieldOperand(reg, HeapObject::kMapOffset), Handle<Map>(holder->map()));
-  j(not_equal, miss);
-
-  // Log the check depth.
-  LOG(IntEvent("check-maps-depth", depth + 1));
-
-  // Perform security check for access to the global object and return
-  // the holder register.
-  ASSERT(object == holder);
-  ASSERT(object->IsJSGlobalProxy() || !object->IsAccessCheckNeeded());
-  if (object->IsJSGlobalProxy()) {
-    CheckAccessGlobalProxy(reg, scratch, miss);
-  }
-  return reg;
 }
 
 

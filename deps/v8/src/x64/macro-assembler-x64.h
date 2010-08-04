@@ -163,6 +163,11 @@ class MacroAssembler: public Assembler {
   // to the first argument in register rsi.
   void EnterExitFrame(ExitFrame::Mode mode, int result_size = 1);
 
+  void EnterApiExitFrame(ExitFrame::Mode mode,
+                         int stack_space,
+                         int argc,
+                         int result_size = 1);
+
   // Leave the current exit frame. Expects/provides the return value in
   // register rax:rdx (untouched) and the pointer to the first
   // argument in register rsi.
@@ -596,24 +601,6 @@ class MacroAssembler: public Assembler {
   // ---------------------------------------------------------------------------
   // Inline caching support
 
-  // Generates code that verifies that the maps of objects in the
-  // prototype chain of object hasn't changed since the code was
-  // generated and branches to the miss label if any map has. If
-  // necessary the function also generates code for security check
-  // in case of global object holders. The scratch and holder
-  // registers are always clobbered, but the object register is only
-  // clobbered if it the same as the holder register. The function
-  // returns a register containing the holder - either object_reg or
-  // holder_reg.
-  // The function can optionally (when save_at_depth !=
-  // kInvalidProtoDepth) save the object at the given depth by moving
-  // it to [rsp + kPointerSize].
-  Register CheckMaps(JSObject* object, Register object_reg,
-                     JSObject* holder, Register holder_reg,
-                     Register scratch,
-                     int save_at_depth,
-                     Label* miss);
-
   // Generate code for checking access rights - used for security checks
   // on access to global objects across environments. The holder register
   // is left untouched, but the scratch register and kScratchRegister,
@@ -737,8 +724,18 @@ class MacroAssembler: public Assembler {
   // Call a code stub.
   void CallStub(CodeStub* stub);
 
+  // Call a code stub and return the code object called.  Try to generate
+  // the code if necessary.  Do not perform a GC but instead return a retry
+  // after GC failure.
+  Object* TryCallStub(CodeStub* stub);
+
   // Tail call a code stub (jump).
   void TailCallStub(CodeStub* stub);
+
+  // Tail call a code stub (jump) and return the code object called.  Try to
+  // generate the code if necessary.  Do not perform a GC but instead return
+  // a retry after GC failure.
+  Object* TryTailCallStub(CodeStub* stub);
 
   // Return from a code stub after popping its arguments.
   void StubReturn(int argc);
@@ -746,8 +743,16 @@ class MacroAssembler: public Assembler {
   // Call a runtime routine.
   void CallRuntime(Runtime::Function* f, int num_arguments);
 
+  // Call a runtime function, returning the CodeStub object called.
+  // Try to generate the stub code if necessary.  Do not perform a GC
+  // but instead return a retry after GC failure.
+  Object* TryCallRuntime(Runtime::Function* f, int num_arguments);
+
   // Convenience function: Same as above, but takes the fid instead.
   void CallRuntime(Runtime::FunctionId id, int num_arguments);
+
+  // Convenience function: Same as above, but takes the fid instead.
+  Object* TryCallRuntime(Runtime::FunctionId id, int num_arguments);
 
   // Convenience function: call an external reference.
   void CallExternalReference(const ExternalReference& ext,
@@ -764,6 +769,16 @@ class MacroAssembler: public Assembler {
   void TailCallRuntime(Runtime::FunctionId fid,
                        int num_arguments,
                        int result_size);
+
+  void PushHandleScope(Register scratch);
+
+  // Pops a handle scope using the specified scratch register and
+  // ensuring that saved register is left unchanged.
+  void PopHandleScope(Register saved, Register scratch);
+
+  // As PopHandleScope, but does not perform a GC.  Instead, returns a
+  // retry after GC failure object if GC is necessary.
+  Object* TryPopHandleScope(Register saved, Register scratch);
 
   // Jump to a runtime routine.
   void JumpToExternalReference(const ExternalReference& ext, int result_size);
@@ -853,6 +868,9 @@ class MacroAssembler: public Assembler {
   void EnterFrame(StackFrame::Type type);
   void LeaveFrame(StackFrame::Type type);
 
+  void EnterExitFramePrologue(ExitFrame::Mode mode, bool save_rax);
+  void EnterExitFrameEpilogue(ExitFrame::Mode mode, int result_size, int argc);
+
   // Allocation support helpers.
   // Loads the top of new-space into the result register.
   // If flags contains RESULT_CONTAINS_TOP then result_end is valid and
@@ -866,6 +884,13 @@ class MacroAssembler: public Assembler {
   // Update allocation top with value in result_end register.
   // If scratch is valid, it contains the address of the allocation top.
   void UpdateAllocationTopHelper(Register result_end, Register scratch);
+
+  // Helper for PopHandleScope.  Allowed to perform a GC and returns
+  // NULL if gc_allowed.  Does not perform a GC if !gc_allowed, and
+  // possibly returns a failure object indicating an allocation failure.
+  Object* PopHandleScopeHelper(Register saved,
+                               Register scratch,
+                               bool gc_allowed);
 };
 
 

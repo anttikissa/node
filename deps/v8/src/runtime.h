@@ -115,6 +115,7 @@ namespace internal {
   F(NumberDiv, 2, 1) \
   F(NumberMod, 2, 1) \
   F(NumberUnaryMinus, 1, 1) \
+  F(NumberAlloc, 0, 1) \
   \
   F(StringAdd, 2, 1) \
   F(StringBuilderConcat, 3, 1) \
@@ -257,6 +258,7 @@ namespace internal {
   /* Statements */ \
   F(NewClosure, 2, 1) \
   F(NewObject, 1, 1) \
+  F(NewObjectFromBound, 2, 1) \
   F(Throw, 1, 1) \
   F(ReThrow, 1, 1) \
   F(ThrowReferenceError, 1, 1) \
@@ -320,6 +322,7 @@ namespace internal {
   F(GetCFrames, 1, 1) \
   F(GetThreadCount, 1, 1) \
   F(GetThreadDetails, 2, 1) \
+  F(SetDisableBreak, 1, 1) \
   F(GetBreakLocations, 1, 1) \
   F(SetFunctionBreakPoint, 3, 1) \
   F(SetScriptBreakPoint, 3, 1) \

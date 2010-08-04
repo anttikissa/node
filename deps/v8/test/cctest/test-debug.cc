@@ -1175,11 +1175,11 @@ TEST(BreakPointReturn) {
   foo->Call(env->Global(), 0, NULL);
   CHECK_EQ(1, break_point_hit_count);
   CHECK_EQ(0, last_source_line);
-  CHECK_EQ(16, last_source_column);
+  CHECK_EQ(15, last_source_column);
   foo->Call(env->Global(), 0, NULL);
   CHECK_EQ(2, break_point_hit_count);
   CHECK_EQ(0, last_source_line);
-  CHECK_EQ(16, last_source_column);
+  CHECK_EQ(15, last_source_column);
 
   // Run without breakpoints.
   ClearBreakPoint(bp);
@@ -6647,6 +6647,71 @@ TEST(DebugEventContext) {
   expected_context.Clear();
   v8::Debug::SetDebugEventListener(NULL);
   expected_context_data = v8::Handle<v8::Value>();
+  CheckDebuggerUnloaded();
+}
+
+
+static void* expected_break_data;
+static bool was_debug_break_called;
+static bool was_debug_event_called;
+static void DebugEventBreakDataChecker(const v8::Debug::EventDetails& details) {
+  if (details.GetEvent() == v8::BreakForCommand) {
+    CHECK_EQ(expected_break_data, details.GetClientData());
+    was_debug_event_called = true;
+  } else if (details.GetEvent() == v8::Break) {
+    was_debug_break_called = true;
+  }
+}
+
+// Check that event details contain context where debug event occured.
+TEST(DebugEventBreakData) {
+  v8::HandleScope scope;
+  DebugLocalContext env;
+  v8::Debug::SetDebugEventListener2(DebugEventBreakDataChecker);
+
+  TestClientData::constructor_call_counter = 0;
+  TestClientData::destructor_call_counter = 0;
+
+  expected_break_data = NULL;
+  was_debug_event_called = false;
+  was_debug_break_called = false;
+  v8::Debug::DebugBreakForCommand();
+  v8::Script::Compile(v8::String::New("(function(x){return x;})(1);"))->Run();
+  CHECK(was_debug_event_called);
+  CHECK(!was_debug_break_called);
+
+  TestClientData* data1 = new TestClientData();
+  expected_break_data = data1;
+  was_debug_event_called = false;
+  was_debug_break_called = false;
+  v8::Debug::DebugBreakForCommand(data1);
+  v8::Script::Compile(v8::String::New("(function(x){return x+1;})(1);"))->Run();
+  CHECK(was_debug_event_called);
+  CHECK(!was_debug_break_called);
+
+  expected_break_data = NULL;
+  was_debug_event_called = false;
+  was_debug_break_called = false;
+  v8::Debug::DebugBreak();
+  v8::Script::Compile(v8::String::New("(function(x){return x+2;})(1);"))->Run();
+  CHECK(!was_debug_event_called);
+  CHECK(was_debug_break_called);
+
+  TestClientData* data2 = new TestClientData();
+  expected_break_data = data2;
+  was_debug_event_called = false;
+  was_debug_break_called = false;
+  v8::Debug::DebugBreak();
+  v8::Debug::DebugBreakForCommand(data2);
+  v8::Script::Compile(v8::String::New("(function(x){return x+3;})(1);"))->Run();
+  CHECK(was_debug_event_called);
+  CHECK(was_debug_break_called);
+
+  CHECK_EQ(2, TestClientData::constructor_call_counter);
+  CHECK_EQ(TestClientData::constructor_call_counter,
+           TestClientData::destructor_call_counter);
+
+  v8::Debug::SetDebugEventListener(NULL);
   CheckDebuggerUnloaded();
 }
 

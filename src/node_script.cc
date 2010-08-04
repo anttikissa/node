@@ -175,7 +175,7 @@ template <node::Script::EvalInputFlags iFlag,
 
   Local<Object> sandbox;
   if (cFlag == newContext) {
-    sandbox = args.Length() > sbIndex ? args[sbIndex]->ToObject() : Object::New();
+    sandbox = args[sbIndex]->IsObject() ? args[sbIndex]->ToObject() : Object::New();
   } else if (cFlag == userContext) {
     sandbox = args[sbIndex]->ToObject();
   }
@@ -280,3 +280,12 @@ template <node::Script::EvalInputFlags iFlag,
 
   return result == args.This() ? result : scope.Close(result);
 }
+
+void node::InitEvals(Handle<Object> target) {
+  HandleScope scope;
+
+  node::Context::Initialize(target);
+  node::Script::Initialize(target);
+}
+
+NODE_MODULE(node_evals, node::InitEvals);

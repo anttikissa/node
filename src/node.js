@@ -77,7 +77,7 @@ process.compile("(function (exports) {"
   };
 
   // Wrap addListener for the special signal types
-  process.addListener = function (type, listener) {
+  process.on = process.addListener = function (type, listener) {
     var ret = addListener.apply(this, arguments);
     if (isSignal(type)) {
       if (!signalWatchers.hasOwnProperty(type)) {
@@ -190,16 +190,15 @@ process.openStdin = function () {
 
 
 // console object
-
+var formatRegExp = /%[sdj]/g;
 function format (f) {
   var i = 1;
   var args = arguments;
-  if (!(f instanceof String)) f = String(f);
-  return f.replace(/%([sdf])/g, function (x) {
+  return String(f).replace(formatRegExp, function (x) {
     switch (x) {
       case '%s': return args[i++];
-      case '%d': return args[i++].toString();
-      case '%f': return JSON.stringify(args[i++]);
+      case '%d': return +args[i++];
+      case '%j': return JSON.stringify(args[i++]);
       default:
         return x;
     }
@@ -231,6 +230,8 @@ global.console.assert = function(expression){
     process.assert(false, format.apply(this, arr));
   }
 }
+
+global.Buffer = module.requireNative('buffer').Buffer;
 
 process.exit = function (code) {
   process.emit("exit");

@@ -519,6 +519,15 @@ class CodeGenerator: public AstVisitor {
   void GenericBinaryOperation(BinaryOperation* expr,
                               OverwriteMode overwrite_mode);
 
+  // Emits code sequence that jumps to a JumpTarget if the inputs
+  // are both smis.  Cannot be in MacroAssembler because it takes
+  // advantage of TypeInfo to skip unneeded checks.
+  // Allocates a temporary register, possibly spilling from the frame,
+  // if it needs to check both left and right.
+  void JumpIfBothSmiUsingTypeInfo(Result* left,
+                                  Result* right,
+                                  JumpTarget* both_smi);
+
   // Emits code sequence that jumps to deferred code if the inputs
   // are not both smis.  Cannot be in MacroAssembler because it takes
   // advantage of TypeInfo to skip unneeded checks.
@@ -560,6 +569,17 @@ class CodeGenerator: public AstVisitor {
                   Condition cc,
                   bool strict,
                   ControlDestination* destination);
+
+  // If at least one of the sides is a constant smi, generate optimized code.
+  void ConstantSmiComparison(Condition cc,
+                             bool strict,
+                             ControlDestination* destination,
+                             Result* left_side,
+                             Result* right_side,
+                             bool left_side_constant_smi,
+                             bool right_side_constant_smi,
+                             bool is_loop_condition);
+
   void GenerateInlineNumberComparison(Result* left_side,
                                       Result* right_side,
                                       Condition cc,
@@ -621,6 +641,7 @@ class CodeGenerator: public AstVisitor {
   void GenerateIsArray(ZoneList<Expression*>* args);
   void GenerateIsRegExp(ZoneList<Expression*>* args);
   void GenerateIsObject(ZoneList<Expression*>* args);
+  void GenerateIsSpecObject(ZoneList<Expression*>* args);
   void GenerateIsFunction(ZoneList<Expression*>* args);
   void GenerateIsUndetectableObject(ZoneList<Expression*>* args);
 
