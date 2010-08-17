@@ -136,6 +136,9 @@ static Handle<Value> Socket(const Arguments& args) {
   // default to TCP
   int domain = PF_INET;
   int type = SOCK_STREAM;
+#ifdef SO_REUSEPORT
+  bool set_reuseport = false;
+#endif
 
   if (args[0]->IsString()) {
     String::Utf8Value t(args[0]->ToString());
@@ -158,12 +161,21 @@ static Handle<Value> Socket(const Arguments& args) {
     } else if (0 == strcasecmp(*t, "UDP")) {
       domain = PF_INET;
       type = SOCK_DGRAM;
+#ifdef SO_REUSEPORT
+      set_reuseport = true;
+#endif
     } else if (0 == strcasecmp(*t, "UDP4")) {
       domain = PF_INET;
       type = SOCK_DGRAM;
+#ifdef SO_REUSEPORT
+      set_reuseport = true;
+#endif
     } else if (0 == strcasecmp(*t, "UDP6")) {
       domain = PF_INET6;
       type = SOCK_DGRAM;
+#ifdef SO_REUSEPORT
+      set_reuseport = true;
+#endif
     } else {
       return ThrowException(Exception::Error(
             String::New("Unknown socket type.")));
@@ -179,6 +191,16 @@ static Handle<Value> Socket(const Arguments& args) {
     close(fd);
     return ThrowException(ErrnoException(fcntl_errno, "fcntl"));
   }
+
+#ifdef SO_REUSEPORT
+  // needed for datagrams to be able to have multiple processes listening to
+  // e.g. broadcasted datagrams.
+  if (set_reuseport) {
+    int flags = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, (const char *)&flags,
+               sizeof(flags));
+  }
+#endif
 
   return scope.Close(Integer::New(fd));
 }
@@ -199,7 +221,7 @@ static inline Handle<Value> ParseAddressArgs(Handle<Value> first,
     // UNIX
     String::Utf8Value path(first->ToString());
 
-    if (path.length() >= ARRAY_SIZE(un.sun_path)) {
+    if ((size_t) path.length() >= ARRAY_SIZE(un.sun_path)) {
       return Exception::Error(String::New("Socket path too long"));
     }
 

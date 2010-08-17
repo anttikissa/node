@@ -284,7 +284,9 @@ class MacroAssembler: public Assembler {
   Condition CheckBothPositiveSmi(Register first, Register second);
 
   // Are either value a tagged smi.
-  Condition CheckEitherSmi(Register first, Register second);
+  Condition CheckEitherSmi(Register first,
+                           Register second,
+                           Register scratch = kScratchRegister);
 
   // Is the value the minimum smi value (since we are using
   // two's complement numbers, negating the value is known to yield
@@ -579,6 +581,9 @@ class MacroAssembler: public Assembler {
 
   // Abort execution if argument is not a number. Used in debug code.
   void AbortIfNotNumber(Register object);
+
+  // Abort execution if argument is a smi. Used in debug code.
+  void AbortIfSmi(Register object);
 
   // Abort execution if argument is not a smi. Used in debug code.
   void AbortIfNotSmi(Register object);

@@ -43,6 +43,13 @@ def set_options(opt):
                 , dest='efence'
                 )
 
+  opt.add_option( '--without-snapshot'
+                , action='store_true'
+                , default=False
+                , help='Build without snapshotting V8 libraries. You might want to set this for cross-compiling. [Default: False]'
+                , dest='without_snapshot'
+                )
+
   opt.add_option( '--without-ssl'
                 , action='store_true'
                 , default=False
@@ -135,6 +142,7 @@ def configure(conf):
   o = Options.options
 
   conf.env["USE_DEBUG"] = o.debug
+  conf.env["SNAPSHOT_V8"] = not o.without_snapshot
 
   conf.env["USE_SHARED_V8"] = o.shared_v8 or o.shared_v8_includes or o.shared_v8_libpath or o.shared_v8_libname
   conf.env["USE_SHARED_CARES"] = o.shared_cares or o.shared_cares_includes or o.shared_cares_libpath
@@ -164,7 +172,7 @@ def configure(conf):
     if conf.check_cfg(package='openssl',
                       args='--cflags --libs',
                       uselib_store='OPENSSL'):
-      conf.env["USE_OPENSSL"] = True
+      Options.options.use_openssl = conf.env["USE_OPENSSL"] = True
       conf.env.append_value("CXXFLAGS", "-DHAVE_OPENSSL=1")
     else:
       libssl = conf.check_cc(lib='ssl',
@@ -176,7 +184,7 @@ def configure(conf):
                                 header_name='openssl/crypto.h',
                                 uselib_store='OPENSSL')
       if libcrypto and libssl:
-        conf.env["USE_OPENSSL"] = True
+        conf.env["USE_OPENSSL"] = Options.options.use_openssl = True
         conf.env.append_value("CXXFLAGS", "-DHAVE_OPENSSL=1")
 
   conf.check(lib='rt', uselib_store='RT')
@@ -187,11 +195,7 @@ def configure(conf):
     if not conf.check(lib='nsl', uselib_store="NSL"):
       conf.fatal("Cannot find nsl library")
 
-
-
   conf.sub_config('deps/libeio')
-
-
 
   if conf.env['USE_SHARED_V8']:
     v8_includes = [];
@@ -256,6 +260,9 @@ def configure(conf):
     conf.env.append_value ('CCFLAGS', threadflags)
     conf.env.append_value ('CXXFLAGS', threadflags)
     conf.env.append_value ('LINKFLAGS', threadflags)
+  if sys.platform.startswith("darwin"):
+    # used by platform_darwin_*.cc
+    conf.env.append_value('LINKFLAGS', ['-framework','Carbon'])
 
   conf.env.append_value("CCFLAGS", "-DX_STACKSIZE=%d" % (1024*64))
 
@@ -324,7 +331,12 @@ def v8_cmd(bld, variant):
   else:
     mode = "debug"
 
-  cmd_R = 'python "%s" -j %d -C "%s" -Y "%s" visibility=default mode=%s %s library=static snapshot=on'
+  if bld.env["SNAPSHOT_V8"]:
+    snapshot = "snapshot=on"
+  else:
+    snapshot = ""
+
+  cmd_R = 'python "%s" -j %d -C "%s" -Y "%s" visibility=default mode=%s %s library=static %s'
 
   cmd = cmd_R % ( scons
                 , Options.options.jobs
@@ -332,8 +344,10 @@ def v8_cmd(bld, variant):
                 , v8dir_src
                 , mode
                 , arch
+                , snapshot
                 )
-  return cmd
+  
+  return ("echo '%s' && " % cmd) + cmd
 
 
 def build_v8(bld):
@@ -556,7 +570,11 @@ def shutdown():
   Options.options.debug
   # HACK to get binding.node out of build directory.
   # better way to do this?
-  if not Options.commands['clean']:
+  if Options.commands['configure']:
+    if not Options.options.use_openssl:
+      print "WARNING WARNING WARNING"
+      print "OpenSSL not found. Will compile Node without crypto support!"
+  elif not Options.commands['clean']:
     if os.path.exists('build/default/node') and not os.path.exists('node'):
       os.symlink('build/default/node', 'node')
     if os.path.exists('build/debug/node_g') and not os.path.exists('node_g'):

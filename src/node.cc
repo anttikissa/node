@@ -926,7 +926,7 @@ static void ReportException(TryCatch &try_catch, bool show_line) {
     //
     // When reporting errors on the first line of a script, this wrapper
     // function is leaked to the user. This HACK is to remove it. The length
-    // of the wrapper is 62. That wrapper is defined in lib/module.js
+    // of the wrapper is 62. That wrapper is defined in src/node.js
     //
     // If that wrapper is ever changed, then this number also has to be
     // updated. Or - someone could clean this up so that the two peices
@@ -1496,7 +1496,6 @@ static Handle<Value> Binding(const Arguments& args) {
     exports->Set(String::New("url"),          String::New(native_url));
     exports->Set(String::New("utils"),        String::New(native_utils));
     exports->Set(String::New("path"),         String::New(native_path));
-    exports->Set(String::New("module"),       String::New(native_module));
     exports->Set(String::New("string_decoder"), String::New(native_string_decoder));
     binding_cache->Set(module, exports);
   } else {
@@ -1504,6 +1503,24 @@ static Handle<Value> Binding(const Arguments& args) {
   }
 
   return scope.Close(exports);
+}
+
+
+static Handle<Value> ProcessTitleGetter(Local<String> property,
+                                        const AccessorInfo& info) {
+  HandleScope scope;
+  int len;
+  const char *s = OS::GetProcessTitle(&len);
+  return scope.Close(s ? String::New(s, len) : String::Empty());
+}
+
+
+static void ProcessTitleSetter(Local<String> property,
+                               Local<Value> value,
+                               const AccessorInfo& info) {
+  HandleScope scope;
+  String::Utf8Value title(value->ToString());
+  OS::SetProcessTitle(*title);
 }
 
 
@@ -1515,14 +1532,33 @@ static void Load(int argc, char *argv[]) {
 
   process = Persistent<Object>::New(process_template->GetFunction()->NewInstance());
 
+
+  process->SetAccessor(String::New("title"),
+                       ProcessTitleGetter,
+                       ProcessTitleSetter);
+
+
   // Add a reference to the global object
   Local<Object> global = v8::Context::GetCurrent()->Global();
   process->Set(String::NewSymbol("global"), global);
 
   // process.version
   process->Set(String::NewSymbol("version"), String::New(NODE_VERSION));
+
   // process.installPrefix
   process->Set(String::NewSymbol("installPrefix"), String::New(NODE_PREFIX));
+
+  Local<Object> versions = Object::New();
+  char buf[20];
+  process->Set(String::NewSymbol("versions"), versions);
+  // +1 to get rid of the leading 'v'
+  versions->Set(String::NewSymbol("node"), String::New(NODE_VERSION+1));
+  versions->Set(String::NewSymbol("v8"), String::New(V8::GetVersion()));
+  versions->Set(String::NewSymbol("ares"), String::New(ARES_VERSION_STR));
+  snprintf(buf, 20, "%d.%d", ev_version_major(), ev_version_minor());
+  versions->Set(String::NewSymbol("ev"), String::New(buf));
+
+
 
   // process.platform
 #define xstr(s) str(s)
@@ -1734,6 +1770,9 @@ static void AtExit() {
 
 
 int main(int argc, char *argv[]) {
+  // Hack aroung with the argv pointer. Used for process.title = "blah".
+  argv = node::OS::SetupArgs(argc, argv);
+
   // Parse a few arguments which are specific to Node.
   node::ParseArgs(&argc, argv);
   // Parse the rest of the args (up to the 'option_end_index' (where '--' was
@@ -1743,7 +1782,7 @@ int main(int argc, char *argv[]) {
 
   if (node::debug_wait_connect) {
     // v8argv is a copy of argv up to the script file argument +2 if --debug-brk
-    // to expose the v8 debugger js object so that module.js can set
+    // to expose the v8 debugger js object so that node.js can set
     // a breakpoint on the first line of the startup script
     v8argc += 2;
     v8argv = new char*[v8argc];

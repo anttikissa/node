@@ -253,7 +253,7 @@ Operand::Operand(const Operand& operand, int32_t offset) {
   int32_t disp_value = 0;
   if (mode == 0x80 || is_baseless) {
     // Mode 2 or mode 0 with rbp/r13 as base: Word displacement.
-    disp_value = *reinterpret_cast<const int32_t*>(&operand.buf_[disp_offset]);
+    disp_value = *BitCast<const int32_t*>(&operand.buf_[disp_offset]);
   } else if (mode == 0x40) {
     // Mode 1: Byte displacement.
     disp_value = static_cast<signed char>(operand.buf_[disp_offset]);
@@ -2941,8 +2941,7 @@ bool Assembler::WriteRecordedPositions() {
 
 
 const int RelocInfo::kApplyMask = RelocInfo::kCodeTargetMask |
-                                  1 << RelocInfo::INTERNAL_REFERENCE |
-                                  1 << RelocInfo::JS_RETURN;
+                                  1 << RelocInfo::INTERNAL_REFERENCE;
 
 
 bool RelocInfo::IsCodedSpecially() {

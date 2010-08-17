@@ -218,7 +218,7 @@ is emitted. These functions are called _listeners_.
 All EventEmitters emit the event `'newListener'` when new listeners are
 added.
 
-When an EventEmitter experiences an error, the typical action is to emit an
+When an `EventEmitter` experiences an error, the typical action is to emit an
 `'error'` event.  Error events are special--if there is no handler for them
 they will print a stack trace and exit the program.
 
@@ -750,6 +750,10 @@ The PID of the process.
 
     console.log('This process is pid ' + process.pid);
 
+### process.title
+
+Getter/setter to set what is displayed in 'ps'.
+
 
 ### process.platform
 
@@ -896,7 +900,7 @@ To create a child process use `require('child_process').spawn()`.
 Child processes always have three streams associated with them. `child.stdin`,
 `child.stdout`, and `child.stderr`.
 
-`ChildProcess` is an EventEmitter.
+`ChildProcess` is an `EventEmitter`.
 
 ### Event:  'exit'
 
@@ -938,11 +942,22 @@ Example:
     grep.stdin.end();
 
 
-### child_process.spawn(command, args=[], env=process.env)
+### child_process.spawn(command, args=[], [options])
 
-Launches a new process with the given `command`, command line arguments, and
-environment variables.  If omitted, `args` defaults to an empty Array, and `env`
-defaults to `process.env`.
+Launches a new process with the given `command`, with  command line arguments in `args`.
+If omitted, `args` defaults to an empty Array.
+
+The third argument is used to specify additional options, which defaults to:
+
+    { cwd: undefined
+    , env: process.env,
+    , customFds: [-1, -1, -1]
+    }
+
+`cwd` allows you to specify the working directory from which the process is spawned.
+Use `env` to specify environment variables that will be visible to the new process.
+With `customFds` it is possible to hook up the new process' [stdin, stout, stderr] to
+existing streams; `-1` means that a new stream should be created.
 
 Example of running `ls -lh /usr`, capturing `stdout`, `stderr`, and the exit code:
 
@@ -1043,6 +1058,7 @@ There is a second optional argument to specify several options. The default opti
     , timeout: 0
     , maxBuffer: 200*1024
     , killSignal: 'SIGKILL'
+    , cwd: null
     , env: null
     }
 
@@ -1632,7 +1648,7 @@ HTTPS is supported if OpenSSL is available on the underlying platform.
 
 ## http.Server
 
-This is an EventEmitter with the following events:
+This is an `EventEmitter` with the following events:
 
 ### Event: 'request'
 
@@ -1684,13 +1700,9 @@ sent to the server on that socket.
 
 If a client connection emits an 'error' event - it will forwarded here.
 
-### http.createServer(requestListener, [options])
+### http.createServer(requestListener)
 
 Returns a new web server object.
-
-The `options` argument is optional. The
-`options` argument accepts the same values as the
-options argument for `net.Server`.
 
 The `requestListener` is a function which is automatically
 added to the `'request'` event.
@@ -1731,7 +1743,7 @@ Stops the server from accepting new connections.
 This object is created internally by a HTTP server--not by
 the user--and passed as the first argument to a `'request'` listener.
 
-This is an EventEmitter with the following events:
+This is an `EventEmitter` with the following events:
 
 ### Event: 'data'
 
@@ -2131,7 +2143,7 @@ changed to
 
     server.listen('/tmp/echo.sock');
 
-This is an EventEmitter with the following events:
+This is an `EventEmitter` with the following events:
 
 ### Event: 'connection'
 
@@ -2184,6 +2196,15 @@ Stops the server from accepting new connections. This function is
 asynchronous, the server is finally closed when the server emits a `'close'`
 event.
 
+### server.maxConnections
+
+Set this property to reject connections when the server's connection count gets high.
+
+### server.connections
+
+The number of concurrent connections on the server.
+
+
 
 ## net.Stream
 
@@ -2192,7 +2213,7 @@ instance implement a duplex stream interface.  They can be created by the
 user and used as a client (with `connect()`) or they can be created by Node
 and passed to the user through the `'connection'` event of a server.
 
-`net.Stream` instances are an EventEmitters with the following events:
+`net.Stream` instances are EventEmitters with the following events:
 
 ### Event: 'connect'
 
@@ -2506,6 +2527,17 @@ resolves the IP addresses which are returned.
         });
       });
     });
+
+### dns.lookup(domain, family=null, callback)
+
+Resolves a domain (e.g. `'google.com'`) into the first found A (IPv4) or
+AAAA (IPv6) record.
+
+The callback has arguments `(err, address, family)`.  The `address` argument
+is a string representation of a IP v4 or v6 address. The `family` argument
+is either the integer 4 or 6 and denotes the family of `address` (not
+neccessarily the value initially passed to `lookup`).
+
 
 ### dns.resolve(domain, rrtype='A', callback)
 
@@ -2964,7 +2996,7 @@ Example:
     // returns
     'foo:bar;baz:bob'
 
-By default, this function will perform PHP/Rails-style parameter mungeing for arrays and objects used as
+By default, this function will perform PHP/Rails-style parameter munging for arrays and objects used as
 values within `obj`.
 Example:
 
@@ -2976,7 +3008,7 @@ Example:
     // returns
     'foo%5Bbar%5D=baz'
 
-If you wish to disable the array mungeing (e.g. when generating parameters for a Java servlet), you
+If you wish to disable the array munging (e.g. when generating parameters for a Java servlet), you
 can set the `munge` argument to `false`.
 Example:
 

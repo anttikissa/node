@@ -582,8 +582,7 @@ void MacroAssembler::GetBuiltinEntry(Register target, Builtins::JavaScript id) {
     // Make sure the code objects in the builtins object and in the
     // builtin function are the same.
     push(target);
-    movq(target, FieldOperand(rdi, JSFunction::kSharedFunctionInfoOffset));
-    movq(target, FieldOperand(target, SharedFunctionInfo::kCodeOffset));
+    movq(target, FieldOperand(rdi, JSFunction::kCodeOffset));
     cmpq(target, Operand(rsp, 0));
     Assert(equal, "Builtin code object changed");
     pop(target);
@@ -783,8 +782,8 @@ void MacroAssembler::SmiCompare(Register dst, Smi* src) {
   if (src->value() == 0) {
     testq(dst, dst);
   } else {
-    Move(kScratchRegister, src);
-    cmpq(dst, kScratchRegister);
+    Register constant_reg = GetSmiConstant(src);
+    cmpq(dst, constant_reg);
   }
 }
 
@@ -882,13 +881,21 @@ Condition MacroAssembler::CheckBothPositiveSmi(Register first,
 }
 
 
-Condition MacroAssembler::CheckEitherSmi(Register first, Register second) {
+Condition MacroAssembler::CheckEitherSmi(Register first,
+                                         Register second,
+                                         Register scratch) {
   if (first.is(second)) {
     return CheckSmi(first);
   }
-  movl(kScratchRegister, first);
-  andl(kScratchRegister, second);
-  testb(kScratchRegister, Immediate(kSmiTagMask));
+  if (scratch.is(second)) {
+    andl(scratch, first);
+  } else {
+    if (!scratch.is(first)) {
+      movl(scratch, first);
+    }
+    andl(scratch, second);
+  }
+  testb(scratch, Immediate(kSmiTagMask));
   return zero;
 }
 
@@ -1970,10 +1977,17 @@ void MacroAssembler::AbortIfNotNumber(Register object) {
 }
 
 
+void MacroAssembler::AbortIfSmi(Register object) {
+  Label ok;
+  Condition is_smi = CheckSmi(object);
+  Assert(NegateCondition(is_smi), "Operand is a smi");
+}
+
+
 void MacroAssembler::AbortIfNotSmi(Register object) {
   Label ok;
   Condition is_smi = CheckSmi(object);
-  Assert(is_smi, "Operand not a smi");
+  Assert(is_smi, "Operand is not a smi");
 }
 
 
@@ -2282,7 +2296,7 @@ void MacroAssembler::InvokeFunction(Register function,
   movq(rsi, FieldOperand(function, JSFunction::kContextOffset));
   movsxlq(rbx,
           FieldOperand(rdx, SharedFunctionInfo::kFormalParameterCountOffset));
-  movq(rdx, FieldOperand(rdx, SharedFunctionInfo::kCodeOffset));
+  movq(rdx, FieldOperand(rdi, JSFunction::kCodeOffset));
   // Advances rdx to the end of the Code object header, to the start of
   // the executable code.
   lea(rdx, FieldOperand(rdx, Code::kHeaderSize));
