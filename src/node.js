@@ -3,6 +3,7 @@
 process.global.process = process;
 process.global.global = process.global;
 global.GLOBAL = global;
+global.root = global;
 
 /** deprecation errors ************************************************/
 
@@ -46,9 +47,23 @@ process.evalcx = function () {
 var nextTickQueue = [];
 
 process._tickCallback = function () {
-  for (var l = nextTickQueue.length; l; l--) {
-    nextTickQueue.shift()();
+  var l = nextTickQueue.length;
+  if (l === 0) return;
+
+  try {
+    for (var i = 0; i < l; i++) {
+      nextTickQueue[i]();
+    }
   }
+  catch(e) {
+    nextTickQueue.splice(0, i+1);
+    if (i+1 < l) {
+      process._needTickCallback();
+    }
+    throw e;
+  }
+
+  nextTickQueue.splice(0, l);
 };
 
 process.nextTick = function (callback) {
@@ -394,6 +409,11 @@ var module = (function () {
       content = extensionCache[ext](content);
     }
 
+    if ("string" !== typeof content) {
+      self.exports = content;
+      return;
+    }
+
     function requireAsync (url, cb) {
       loadModule(url, self, cb);
     }
@@ -410,7 +430,7 @@ var module = (function () {
     var dirname = path.dirname(filename);
 
     if (contextLoad) {
-      if (!Script) Script = Script = process.binding('evals').Script;
+      if (!Script) Script = process.binding('evals').Script;
 
       if (self.id !== ".") {
         debug('load submodule');
@@ -424,7 +444,7 @@ var module = (function () {
         sandbox.__filename  = filename;
         sandbox.__dirname   = dirname;
         sandbox.module      = self;
-        sandbox.root        = global;
+        sandbox.root        = root;
 
         Script.runInNewContext(content, sandbox, filename);
 
@@ -436,25 +456,20 @@ var module = (function () {
         global.__filename = filename;
         global.__dirname  = dirname;
         global.module     = self;
-        global.root       = global;
         Script.runInThisContext(content, filename);
       }
 
     } else {
-      if ('string' === typeof content) {
-        // create wrapper function
-        var wrapper = "(function (exports, require, module, __filename, __dirname) { "
-                    + content
-                    + "\n});";
+      // create wrapper function
+      var wrapper = "(function (exports, require, module, __filename, __dirname) { "
+                  + content
+                  + "\n});";
 
-        var compiledWrapper = process.compile(wrapper, filename);
-        if (filename === process.argv[1] && global.v8debug) {
-          global.v8debug.Debug.setBreakPoint(compiledWrapper, 0, 0);
-        }
-        compiledWrapper.apply(self.exports, [self.exports, require, self, filename, dirname]);
-      } else {
-        self.exports = content;
+      var compiledWrapper = process.compile(wrapper, filename);
+      if (filename === process.argv[1] && global.v8debug) {
+        global.v8debug.Debug.setBreakPoint(compiledWrapper, 0, 0);
       }
+      compiledWrapper.apply(self.exports, [self.exports, require, self, filename, dirname]);
     }
   };
 
@@ -592,7 +607,7 @@ global.setTimeout = function (callback, after) {
 global.setInterval = function (callback, repeat) {
   var timer = new process.Timer();
   addTimerListener.apply(timer, arguments);
-  timer.start(repeat, repeat);
+  timer.start(repeat, repeat ? repeat : 1);
   return timer;
 };
 
