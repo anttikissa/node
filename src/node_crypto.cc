@@ -25,6 +25,7 @@ static Persistent<String> subject_symbol;
 static Persistent<String> issuer_symbol;
 static Persistent<String> valid_from_symbol;
 static Persistent<String> valid_to_symbol;
+static Persistent<String> fingerprint_symbol;
 static Persistent<String> name_symbol;
 static Persistent<String> version_symbol;
 
@@ -322,21 +323,23 @@ Handle<Value> SecureStream::ReadInject(const Arguments& args) {
           String::New("Second argument should be a buffer")));
   }
 
-  Buffer * buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
+  Local<Object> buffer_obj = args[0]->ToObject();
+  char *buffer_data = Buffer::Data(buffer_obj);
+  size_t buffer_length = Buffer::Length(buffer_obj);
 
   size_t off = args[1]->Int32Value();
-  if (off >= buffer->length()) {
+  if (off >= buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Offset is out of bounds")));
   }
 
   size_t len = args[2]->Int32Value();
-  if (off + len > buffer->length()) {
+  if (off + len > buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Length is extends beyond buffer")));
   }
 
-  int bytes_written = BIO_write(ss->pbioRead, (char*)buffer->data() + off, len);
+  int bytes_written = BIO_write(ss->pbioRead, (char*)buffer_data + off, len);
 
   if (bytes_written < 0) {
     if (errno == EAGAIN || errno == EINTR) return Null();
@@ -362,16 +365,18 @@ Handle<Value> SecureStream::ReadExtract(const Arguments& args) {
           String::New("Second argument should be a buffer")));
   }
 
-  Buffer * buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
+  Local<Object> buffer_obj = args[0]->ToObject();
+  char *buffer_data = Buffer::Data(buffer_obj);
+  size_t buffer_length = Buffer::Length(buffer_obj);
 
   size_t off = args[1]->Int32Value();
-  if (off >= buffer->length()) {
+  if (off >= buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Offset is out of bounds")));
   }
 
   size_t len = args[2]->Int32Value();
-  if (off + len > buffer->length()) {
+  if (off + len > buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Length is extends beyond buffer")));
   }
@@ -393,7 +398,7 @@ Handle<Value> SecureStream::ReadExtract(const Arguments& args) {
     return scope.Close(Integer::New(0));
   }
 
-  bytes_read = SSL_read(ss->pSSL, (char*)buffer->data() + off, len);
+  bytes_read = SSL_read(ss->pSSL, (char*)buffer_data + off, len);
   if (bytes_read < 0) {
     int err = SSL_get_error(ss->pSSL, bytes_read);
     if (err == SSL_ERROR_WANT_READ) {
@@ -445,21 +450,23 @@ Handle<Value> SecureStream::WriteExtract(const Arguments& args) {
           String::New("Second argument should be a buffer")));
   }
 
-  Buffer * buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
+  Local<Object> buffer_obj = args[0]->ToObject();
+  char *buffer_data = Buffer::Data(buffer_obj);
+  size_t buffer_length = Buffer::Length(buffer_obj);
 
   size_t off = args[1]->Int32Value();
-  if (off >= buffer->length()) {
+  if (off >= buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Offset is out of bounds")));
   }
 
   size_t len = args[2]->Int32Value();
-  if (off + len > buffer->length()) {
+  if (off + len > buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Length is extends beyond buffer")));
   }
 
-  int bytes_read = BIO_read(ss->pbioWrite, (char*)buffer->data() + off, len);
+  int bytes_read = BIO_read(ss->pbioWrite, (char*)buffer_data + off, len);
 
   return scope.Close(Integer::New(bytes_read));
 }
@@ -480,16 +487,18 @@ Handle<Value> SecureStream::WriteInject(const Arguments& args) {
           String::New("Second argument should be a buffer")));
   }
 
-  Buffer * buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
+  Local<Object> buffer_obj = args[0]->ToObject();
+  char *buffer_data = Buffer::Data(buffer_obj);
+  size_t buffer_length = Buffer::Length(buffer_obj);
 
   size_t off = args[1]->Int32Value();
-  if (off >= buffer->length()) {
+  if (off >= buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Offset is out of bounds")));
   }
 
   size_t len = args[2]->Int32Value();
-  if (off + len > buffer->length()) {
+  if (off + len > buffer_length) {
     return ThrowException(Exception::Error(
           String::New("Length is extends beyond buffer")));
   }
@@ -503,7 +512,7 @@ Handle<Value> SecureStream::WriteInject(const Arguments& args) {
     }
     return scope.Close(Integer::New(0));
   }
-  int bytes_written = SSL_write(ss->pSSL, (char*)buffer->data() + off, len);
+  int bytes_written = SSL_write(ss->pSSL, (char*)buffer_data + off, len);
 
   return scope.Close(Integer::New(bytes_written));
 }
@@ -539,6 +548,28 @@ Handle<Value> SecureStream::GetPeerCertificate(const Arguments& args) {
     BIO_read(bio, buf, sizeof(buf) - 1);
     BIO_free(bio);
     info->Set(valid_to_symbol, String::New(buf));
+
+    unsigned int md_size, i;
+    unsigned char md[EVP_MAX_MD_SIZE];
+    if (X509_digest(peer_cert, EVP_sha1(), md, &md_size)) {
+      const char hex[] = "0123456789ABCDEF";
+      char fingerprint[EVP_MAX_MD_SIZE * 3];
+
+      for (i=0; i<md_size; i++) {
+        fingerprint[3*i] = hex[(md[i] & 0xf0) >> 4];
+        fingerprint[(3*i)+1] = hex[(md[i] & 0x0f)];
+        fingerprint[(3*i)+2] = ':';
+      }
+
+      if (md_size > 0) {
+        fingerprint[(3*(md_size-1))+2] = '\0';
+      }
+      else {
+        fingerprint[0] = '\0';
+      }
+
+      info->Set(fingerprint_symbol, String::New(fingerprint));
+    }
 
     X509_free(peer_cert);
   }
@@ -1001,8 +1032,11 @@ class Cipher : public ObjectWrap {
     unsigned char *out=0;
     int out_len=0;
     if (Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      int r = cipher->CipherUpdate(buffer->data(), buffer->length(), &out, &out_len);
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      int r = cipher->CipherUpdate(buffer_data, buffer_length, &out, &out_len);
     } else {
       char* buf = new char[len];
       ssize_t written = DecodeWrite(buf, len, args[0], enc);
@@ -1344,9 +1378,12 @@ class Decipher : public ObjectWrap {
     // if alloc_buf then buf must be deleted later
     bool alloc_buf = false;
     if (Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      buf = buffer->data();
-      len = buffer->length();
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      buf = buffer_data;
+      len = buffer_length;
     } else {
       alloc_buf = true;
       buf = new char[len];
@@ -1664,8 +1701,11 @@ class Hmac : public ObjectWrap {
     }
 	
     if( Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      int r = hmac->HmacUpdate(buffer->data(), buffer->length());
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      int r = hmac->HmacUpdate(buffer_data, buffer_length);
     } else {
       char* buf = new char[len];
       ssize_t written = DecodeWrite(buf, len, args[0], enc);
@@ -1811,8 +1851,11 @@ class Hash : public ObjectWrap {
 
 
     if (Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      int r = hash->HashUpdate(buffer->data(), buffer->length());
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      int r = hash->HashUpdate(buffer_data, buffer_length);
     } else {
       char* buf = new char[len];
       ssize_t written = DecodeWrite(buf, len, args[0], enc);
@@ -1981,8 +2024,11 @@ class Sign : public ObjectWrap {
     }
 
     if (Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      int r = sign->SignUpdate(buffer->data(), buffer->length());
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      int r = sign->SignUpdate(buffer_data, buffer_length);
     } else {
       char* buf = new char[len];
       ssize_t written = DecodeWrite(buf, len, args[0], enc);
@@ -2180,8 +2226,11 @@ class Verify : public ObjectWrap {
     }
 
     if(Buffer::HasInstance(args[0])) {
-      Buffer *buffer = ObjectWrap::Unwrap<Buffer>(args[0]->ToObject());
-      int r = verify->VerifyUpdate(buffer->data(), buffer->length());
+      Local<Object> buffer_obj = args[0]->ToObject();
+      char *buffer_data = Buffer::Data(buffer_obj);
+      size_t buffer_length = Buffer::Length(buffer_obj);
+
+      int r = verify->VerifyUpdate(buffer_data, buffer_length);
     } else {
       char* buf = new char[len];
       ssize_t written = DecodeWrite(buf, len, args[0], enc);
@@ -2296,6 +2345,7 @@ void InitCrypto(Handle<Object> target) {
   issuer_symbol     = NODE_PSYMBOL("issuer");
   valid_from_symbol = NODE_PSYMBOL("valid_from");
   valid_to_symbol   = NODE_PSYMBOL("valid_to");
+  fingerprint_symbol   = NODE_PSYMBOL("fingerprint");
   name_symbol       = NODE_PSYMBOL("name");
   version_symbol    = NODE_PSYMBOL("version");
 }

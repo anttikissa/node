@@ -198,17 +198,6 @@ var module = (function () {
       return;
     }
 
-/*    if (dirs.length == 0) {
-      if (callback) {
-        callback();
-      } else {
-        return; // sync returns null
-      }
-    } //no need for this, eventually move simpler if to traverser
-     // question: what with /absolute/id when dirs.length is 0?
-     // if "load it anyway", then this ^^^ code is wrong, but omitting it
-     // makes it right*/
-
     var nextLoc = traverser(id, id.charAt(0) === '/' ? [''] : dirs);
 
     var fs = requireNative('fs');
@@ -444,6 +433,7 @@ var module = (function () {
         sandbox.__filename  = filename;
         sandbox.__dirname   = dirname;
         sandbox.module      = self;
+        sandbox.global      = sandbox;
         sandbox.root        = root;
 
         Script.runInNewContext(content, sandbox, filename);
@@ -759,7 +749,11 @@ if (process.argv[1]) {
     process.argv[1] = path.join(cwd, process.argv[1]);
   }
 
-  module.runMain();
+  // REMOVEME: nextTick should not be necessary. This hack to get
+  // test/simple/test-exception-handler2.js working.
+  process.nextTick(function() {
+    module.runMain();
+  });
 } else {
   // No arguments, run the repl
   var repl = module.requireNative('repl');
